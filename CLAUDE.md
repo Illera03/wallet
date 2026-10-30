@@ -92,6 +92,7 @@ Los logos de marcas vienen de Simple Icons (CC0); los servicios sin logo usan su
 - Se **quitó todo lo relativo al plan anual**: los precios de referencia no eran fiables.
 - Se quitó el gráfico de «Cobros previstos en los próximos 12 meses».
 - En Inicio solo quedan: la tarjeta del mes (lo gastado, una barra y la comparación con un mes normal), Próximos cobros y Para revisar. «Apuntar rápido» y «Presupuestos» se quitaron de Inicio, pero las funciones siguen: los gastos habituales en la pestaña Gastos y los presupuestos en Ajustes → categorías.
+- Análisis se divide en tres secciones (`ui.anView`: Resumen, Suscripciones, Gastos) para que las gráficas no se amontonen. Helpers de gráficos: `vbars`, `hbars`, `donut` (conic-gradient) y `lineChart` (SVG).
 - El transporte (bus semanal de 13,15 €, recarga Barik de 15 €) no es una suscripción: va como gastos habituales con presupuesto en la categoría Transporte.
 - El resumen de la cabecera se simplificó porque el usuario lo veía «sobrecargado».
 - La versión anterior se publicaba como artifact de claude.ai, donde los escudos de Brave borraban los datos (almacenamiento de terceros efímero). Por eso existe esta PWA en un dominio propio.

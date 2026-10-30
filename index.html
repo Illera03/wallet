@@ -291,6 +291,23 @@ tr.transfer td{color:var(--faint)}
 .hval{text-align:right;white-space:nowrap;min-width:84px;display:grid}
 .hval b{font-weight:600}
 .hval small{font-size:.74rem;color:var(--muted)}
+.donut-wrap{display:flex;gap:22px;align-items:center;flex-wrap:wrap}
+.donut{width:150px;height:150px;border-radius:50%;display:grid;place-items:center;flex:none;position:relative}
+.donut::before{content:"";position:absolute;inset:26px;border-radius:50%;background:var(--surface)}
+.donut span{position:relative;font-family:var(--f-display);font-weight:700;font-size:1.15rem;text-align:center;line-height:1.1}
+.donut small{display:block;font-family:var(--f-body);font-weight:500;font-size:.72rem;color:var(--muted)}
+.split-legend.col{flex-direction:column;gap:6px}
+.line-chart{position:relative;height:200px;margin:10px 0 0 46px;padding-bottom:22px}
+.line-chart .vgrid{inset:0 0 22px 0}
+.line-chart svg{position:absolute;inset:0 0 22px 0;width:100%;height:calc(100% - 22px);overflow:visible}
+.line-x{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:space-between;font-size:.74rem;color:var(--muted)}
+.heat-wrap{display:flex;gap:6px}
+.heat-days{display:grid;grid-template-rows:repeat(7,1fr);gap:3px;font-size:.66rem;color:var(--muted)}
+.heat-days span{display:flex;align-items:center}
+.heat{flex:1;display:grid;grid-template-rows:repeat(7,auto);grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:3px;max-width:520px}
+.hcell{aspect-ratio:1;border-radius:3px;background:var(--surface-2);border:1px solid var(--line)}
+.hcell:hover,.hcell:focus{outline:2px solid var(--ink);outline-offset:1px}
+.budget-track{background:var(--surface-2);border-radius:4px;overflow:hidden}
 .dtable summary{cursor:pointer;color:var(--accent);font-weight:600;font-size:.88rem}
 .dtable .tbl-wrap{margin-top:10px}
 .tip{position:fixed;z-index:70;background:var(--ink);color:var(--surface);border-radius:8px;padding:8px 10px;font-size:.82rem;line-height:1.4;max-width:280px;pointer-events:none;box-shadow:0 8px 24px rgba(0,0,0,.25)}
@@ -990,6 +1007,23 @@ function hbars(rows, { max, unit = '/mes', sub } = {}) {
     </div>`).join('')}</div>`;
 }
 
+// Donut from a conic-gradient. parts: [{name, v, color, sub}]
+function donut(parts, center) {
+  const tot = parts.reduce((t, p) => t + p.v, 0) || 1; let acc0 = 0;
+  const stops = parts.map(p => { const a = acc0; acc0 += p.v / tot * 100; return `${p.color} ${a}% ${acc0}%`; }).join(',');
+  return `<div class="donut-wrap"><div class="donut" style="background:conic-gradient(${stops})" ${tipAttr(parts.map(p => `${p.name}: ${p.sub} (${pctOf(p.v, tot)} %)`))}><span>${center}</span></div>
+    <div class="split-legend col">${parts.map(p => `<span><i class="key" style="background:${p.color}"></i>${esc(p.name)}<b>${p.sub}</b><small>${pctOf(p.v, tot)} %</small></span>`).join('')}</div></div>`;
+}
+
+// Cumulative line chart in SVG. series: [{name, color, pts:[values by day], dash}]
+function lineChart(series, days) {
+  const W = 600, H = 200, top = niceMax(Math.max(...series.flatMap(s => s.pts), 0));
+  const x = i => i / (days - 1) * W, y = v => H - v / top * H;
+  return `<div class="line-chart"><div class="vgrid">${[0, top / 2, top].map(t => `<div class="vtick" style="bottom:${t / top * 100}%"><span>${eur0(t)}</span></div>`).join('')}</div>
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${series.map(s => `<polyline fill="none" stroke="${s.color}" stroke-width="2.5" vector-effect="non-scaling-stroke" ${s.dash ? 'stroke-dasharray="5 4"' : ''} points="${s.pts.map((v, i) => x(i).toFixed(1) + ',' + y(v).toFixed(1)).join(' ')}"/>`).join('')}</svg>
+    <div class="line-x"><span>1</span><span>${days >> 1}</span><span>${days}</span></div></div>`;
+}
+
 function chartCard(title, takeaway, body, extra = '') {
   return `<section class="panel chart-card"><div class="chart-head"><h2>${title}</h2>${takeaway ? `<p class="takeaway">${takeaway}</p>` : ''}</div>${body}${extra}</section>`;
 }
@@ -1111,11 +1145,92 @@ function viewAnalysis() {
   const hRows = h.map(g => ({ name: g.name, v: g.perMonth, color: catOf(g.cat).c, icon: catIcon(g.cat, 22), sub: eur0(g.perYear) + '/año', tip: [g.name, `${g.count} veces · ${eur(g.avg)} de media`, `${eur(g.perMonth)} al mes · ${eur(g.perYear)} al año`] }));
   const hCard = chartCard('Gastos hormiga', h.length ? `Compras de ${eur0(S.hMax)} o menos que repites: suman <b>${eur0(hy)}</b> al año.` : `Aparecen cuando repites ${S.hMin} o más veces un gasto de ${eur0(S.hMax)} o menos (cámbialo en Ajustes).`, h.length ? hbars(hRows) : '');
 
-  return `${kpis}${comp}
-    ${fixCard}
-    <div class="two">${histCard}${expCard}</div>
-    ${accCard ? `<div class="two">${accCard}${hCard}</div>` : hCard}
-    ${sugCard}`;
+  /* 10. This month vs last month, cumulative one-off spend per day */
+  const curYM = todayISO.slice(0, 7), prevYM = monthsBack(2)[0];
+  const dim = ym => new Date(+ym.slice(0, 4), +ym.slice(5, 7), 0).getDate();
+  const cumul = (ym, upto) => { const by = Array(dim(ym)).fill(0); txs.filter(t => t.date.startsWith(ym)).forEach(t => { by[+t.date.slice(8) - 1] += t.amount; }); let r = 0; return by.map(v => r += v).slice(0, upto); };
+  const curC = cumul(curYM, TODAY.getDate()), prevC = cumul(prevYM, dim(prevYM));
+  const prevSame = prevC[Math.min(TODAY.getDate(), prevC.length) - 1] || 0;
+  const lineCard = txs.length ? chartCard('Este mes frente al anterior',
+    `Gastos puntuales acumulados día a día. Hoy llevas <b>${eur(curC.at(-1) || 0)}</b>; a estas alturas de ${MES(prevYM, true)} llevabas ${eur(prevSame)}.`,
+    lineChart([{ name: MES(prevYM, true), color: 'var(--faint)', pts: prevC, dash: true }, { name: MES(curYM, true), color: C.exp, pts: curC }], Math.max(dim(curYM), dim(prevYM)))
+    + `<div class="legend"><span><i class="key" style="background:${C.exp}"></i>${MES(curYM, true)}</span><span><i class="key" style="background:var(--faint)"></i>${MES(prevYM, true)}</span></div>`) : '';
+
+  /* 11. One-off expenses by category, last 12 months */
+  const back12 = monthsBack(12), from12 = back12[0];
+  const tx12 = txs.filter(t => t.date >= from12);
+  const catTot = {}; tx12.forEach(t => { catTot[t.cat] = (catTot[t.cat] || 0) + t.amount; });
+  const topCats = Object.keys(catTot).sort((a, b) => catTot[b] - catTot[a]).slice(0, 5);
+  const grp = t => topCats.includes(t.cat) ? t.cat : '_';
+  const keys = [...topCats, ...(Object.keys(catTot).length > 5 ? ['_'] : [])];
+  const kName = k => k === '_' ? 'Otras' : catOf(k).n, kColor = k => k === '_' ? 'var(--faint)' : catOf(k).c;
+  const evoCols = back12.map((m, i) => {
+    const mt = tx12.filter(t => t.date.startsWith(m)); const by = k => mt.filter(t => grp(t) === k).reduce((a, t) => a + t.amount, 0);
+    const segs = keys.map(k => ({ v: by(k), color: kColor(k) })); const total = segs.reduce((a, s) => a + s.v, 0);
+    return { label: MES(m) + (i === 11 ? '*' : ''), total, segs, tip: [MES(m, true) + ': ' + eur(total), ...keys.filter(k => by(k)).map(k => `${kName(k)}: ${eur(by(k))}`)] };
+  });
+  const evoCard = tx12.length ? chartCard('Puntuales mes a mes', 'Últimos 12 meses, por categoría.',
+    vbars(evoCols, { height: 180, valueLabels: 'peak', dense: true }) + `<div class="legend">${keys.map(k => `<span><i class="key" style="background:${kColor(k)}"></i>${esc(kName(k))}</span>`).join('')}<span>* mes en curso</span></div>`) : '';
+
+  /* 12. Weekday */
+  const WD = ['L', 'M', 'X', 'J', 'V', 'S', 'D'], WDL = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
+  const wd = WD.map(() => ({ v: 0, n: 0 })); txs.forEach(t => { const w = (pd(t.date).getDay() + 6) % 7; wd[w].v += t.amount; wd[w].n++; });
+  const wdTop = wd.reduce((b, x, i) => x.v > wd[b].v ? i : b, 0);
+  const wdCard = txs.length ? chartCard('¿Qué día gastas más?', `Los <b>${WDL[wdTop]}</b> se te va más dinero: ${eur(wd[wdTop].v)} en ${wd[wdTop].n} ${wd[wdTop].n === 1 ? 'gasto' : 'gastos'}.`,
+    vbars(wd.map((x, i) => ({ label: WD[i], total: x.v, segs: [{ v: x.v, color: C.exp }], tip: [WDL[i][0].toUpperCase() + WDL[i].slice(1) + ': ' + eur(x.v), `${x.n} ${x.n === 1 ? 'gasto' : 'gastos'}`, x.n ? `${eur(x.v / x.n)} de media` : ''] })), { height: 150, valueLabels: 'peak' })) : '';
+
+  /* 13. Calendar heatmap, last 16 weeks */
+  const startD = addDays(todayISO, -((TODAY.getDay() + 6) % 7) - 7 * 15);
+  const byDay = {}; txs.forEach(t => { if (t.date >= startD) byDay[t.date] = (byDay[t.date] || 0) + t.amount; });
+  const dayMax = Math.max(...Object.values(byDay), 1);
+  const cells = []; for (let d = startD; d <= todayISO; d = addDays(d, 1)) cells.push(d);
+  const heatCard = txs.length ? chartCard('Calendario de gasto', `Cada cuadro es un día de las últimas 16 semanas; cuanto más intenso, más gastaste. ${Object.keys(byDay).length} días con gastos.`,
+    `<div class="heat-wrap"><div class="heat-days">${WD.map(d => `<span>${d}</span>`).join('')}</div><div class="heat">${cells.map(d => { const v = byDay[d] || 0; return `<span class="hcell" style="${v ? `background:color-mix(in srgb,var(--s-exp) ${Math.round(20 + v / dayMax * 80)}%,var(--surface-2))` : ''}" ${tipAttr([fmtDY(d), v ? eur(v) : 'Sin gastos'])}></span>`; }).join('')}</div></div>`) : '';
+
+  /* 14. Budgets */
+  const br = budgetRows();
+  const budCard = br.length ? chartCard('Presupuestos del mes', `${br.filter(b => b.ratio > 1).length ? `Te has pasado en <b>${br.filter(b => b.ratio > 1).map(b => esc(b.c.n)).join(', ')}</b>.` : 'Vas dentro de todos tus presupuestos.'} Se cambian en Ajustes → categorías.`,
+    `<div class="hbars">${br.map(b => `<div class="hrow" ${tipAttr([b.c.n, `${eur(b.spent)} de ${eur(b.budget)}`, b.ratio > 1 ? `Te has pasado ${eur(b.spent - b.budget)}` : `Te quedan ${eur(b.budget - b.spent)}`])}>
+      <span class="hname">${catIcon(b.k, 22)}<span>${esc(b.c.n)}</span></span>
+      <span class="htrack budget-track"><span class="hfill" style="width:${Math.min(100, b.ratio * 100)}%;background:${b.ratio > 1 ? 'var(--bad)' : b.c.c}"></span></span>
+      <span class="hval"><b>${pctOf(b.spent, b.budget)} %</b><small>${eur0(b.spent)} de ${eur0(b.budget)}</small></span></div>`).join('')}</div>`) : '';
+
+  /* 15. Size of expenses */
+  const BK = [[0, 5, '< 5 €'], [5, 20, '5–20'], [20, 50, '20–50'], [50, 100, '50–100'], [100, Infinity, '> 100']];
+  const bk = BK.map(([a, b, l]) => { const g = txs.filter(t => t.amount >= a && t.amount < b); return { l, n: g.length, v: g.reduce((s, t) => s + t.amount, 0) }; });
+  const sizeCard = txs.length ? chartCard('¿Cuánto cuesta cada gasto?', `La mayoría de tus gastos son de <b>${bk.reduce((a, b) => b.n > a.n ? b : a).l}${bk.reduce((a, b) => b.n > a.n ? b : a).l.includes('€') ? '' : ' €'}</b>. Cada barra suma lo gastado en ese tramo.`,
+    vbars(bk.map(b => ({ label: b.l, total: b.v, segs: [{ v: b.v, color: C.exp }], tip: [b.l + (b.l.includes('€') ? '' : ' €') + ': ' + eur(b.v), `${b.n} ${b.n === 1 ? 'gasto' : 'gastos'}`] })), { height: 150 })) : '';
+
+  /* 16. Biggest one-off expenses */
+  const big = [...txs].sort((a, b) => b.amount - a.amount).slice(0, 6);
+  const bigCard = big.length ? chartCard('Los gastos más grandes', '', hbars(big.map(t => ({ name: t.desc, v: t.amount, color: catOf(t.cat).c, icon: catIcon(t.cat, 22), sub: fmtNum(t.date), tip: [t.desc, eur(t.amount), fmtDY(t.date) + ' · ' + catOf(t.cat).n + ' · ' + acc(t.account).name] })), { unit: '' })) : '';
+
+  /* 17. Habitual expenses */
+  const qMap = {}; txs.filter(t => t.q).forEach(t => { (qMap[t.q] = qMap[t.q] || { n: 0, v: 0, t }).n++; qMap[t.q].v += t.amount; });
+  const qRows = Object.entries(qMap).sort((a, b) => b[1].v - a[1].v).map(([id, g]) => { const q = (S.quick || []).find(x => x.id === id) || g.t; return { name: q.desc, v: g.v, color: catOf(q.cat).c, icon: catIcon(q.cat, 22), sub: `${g.n} ${g.n === 1 ? 'vez' : 'veces'}`, tip: [q.desc, `${g.n} ${g.n === 1 ? 'vez' : 'veces'} · ${eur(g.v)} en total`] }; });
+  const qCard = qRows.length ? chartCard('Gastos habituales', 'Lo que has apuntado con un toque desde la pestaña Gastos.', hbars(qRows, { unit: '' })) : '';
+
+  /* 18. Subscriptions by period and by status */
+  const PC = ['var(--s-fix)', 'var(--s-exp)', 'var(--s-sav)', '#9A3FD0', '#B7791F', '#7A818E'];
+  const perParts = Object.keys(PERIODS).map(p => ({ p, g: spendSubs.filter(s => s.period === p && monthly(s) > 0) })).filter(x => x.g.length)
+    .map((x, i) => ({ name: PERIODS[x.p].label, v: x.g.reduce((t, s) => t + monthly(s), 0), color: PC[i % PC.length], sub: `${eur(x.g.reduce((t, s) => t + monthly(s), 0))}/mes · ${x.g.length}` }));
+  const perCard = perParts.length ? chartCard('Cómo se cobran', 'Coste mensual según cada cuánto se paga. Las anuales pesan poco al mes pero llegan de golpe.', donut(perParts, eur0(fixedM) + '<small>/mes</small>')) : '';
+  const allSubs = subsVis();
+  const stParts = [['activa', 'Activas', 'var(--s-fix)'], ['prueba', 'En prueba', 'var(--s-exp)'], ['cancelada', 'Canceladas', 'var(--faint)']]
+    .map(([k, n, c]) => ({ name: n, v: allSubs.filter(s => s.status === k).length, color: c })).filter(p => p.v).map(p => ({ ...p, sub: String(p.v) }));
+  const cancelY = allSubs.filter(s => s.status === 'cancelada' && s.amount > 0).reduce((t, s) => t + monthly(s) * 12, 0);
+  const stCard = stParts.length ? chartCard('Estado de tus suscripciones', cancelY ? `Lo que has cancelado te ahorra <b>${eur0(cancelY)}</b> al año.` : '', donut(stParts, allSubs.length + '<small>en total</small>')) : '';
+
+  const AV = [['resumen', 'Resumen'], ['subs', 'Suscripciones'], ['gastos', 'Gastos']];
+  const av = AV.some(a => a[0] === ui.anView) ? ui.anView : 'resumen';
+  const avSeg = `<div class="seg" role="group" aria-label="Sección">${AV.map(([k, l]) => `<button data-act="set" data-k="anView" data-v="${k}" aria-pressed="${av === k}">${l}</button>`).join('')}</div>`;
+  const pair = (a, b) => a && b ? `<div class="two">${a}${b}</div>` : a + b;
+  const body = {
+    resumen: `${kpis}${comp}${histCard}${pair(lineCard, accCard)}${sugCard}`,
+    subs: `${fixCard}${pair(perCard, stCard)}`,
+    gastos: `${evoCard}${pair(expCard, budCard)}${pair(wdCard, sizeCard)}${heatCard}${pair(bigCard, qCard)}${hCard}`
+  }[av];
+  return `${avSeg}${body}`;
 }
 
 /* tooltip */
